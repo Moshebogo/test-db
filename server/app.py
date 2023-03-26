@@ -1,21 +1,46 @@
-from flask import Flask, make_response, jsonify, request
+from flask import Flask, make_response, jsonify, request, session as browser_session, render_template
 from flask_migrate import Migrate
-from models import db, Boats, Times, BoatTimes
+from models import db, Boats, Times, BoatTimes, User
+import os
 
 app = Flask(__name__)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///boatrentals.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.secret_key = os.environ.get('SECRET_KEY')
 
 migrate = Migrate(app, db)
-
 db.init_app(app)
 
+EXCLUDED_ENDPOINTS = ['login', 'root']
 
+# route to check if user is logged in
+@app.before_request
+def check_if_logged_in():
+    if request.endpoint not in EXCLUDED_ENDPOINTS:
+        user_id = browser_session.get('user_id')
+        user_verified = User.query.filter(User.id == user_id).first()
+
+        if not user_verified:
+            return jsonify({"error": "not authorized"}, 401) 
+
+
+# route for LOGIN
+@app.route("/login", methods = ['POST'])
+def login():
+    username = request.get_json().get('username')
+    user_exists = User.query.filter(User.username == username).first()
+    if not user_exists: 
+        return jsonify({"error": "user not found"}), 404
+    elif user_exists:
+        browser_session['user_id'] = user_exists.id
+        print(user_exists.username)
+        return jsonify(username)
 
 # default route
 @app.route("/")
-def default_route():
-    return {"status": "default route"}, 200
+def root():
+        return render_template('index.html')
 
 # route for all boats
 @app.route("/boats", methods = ['GET', 'POST'])
@@ -123,7 +148,7 @@ def boatTimes():
 @app.route('/boatTimes/<id>', methods = ['GET', 'DELETE', 'PATCH'])  
 def boat_time_by_id(id):
     boat_time_exists = BoatTimes.query.get(id)
-    # validates if boatTime exists  
+    # validates if boat`Time exists  
     if not boat_time_exists:
         return jsonify({"error": "boat-time not found"}), 404
     if boat_time_exists:
@@ -143,3 +168,45 @@ def boat_time_by_id(id):
             db.session.add(boat_time_exists)
             db.session.commit()   
             return jsonify(boat_time_exists.to_dict()), 200     
+
+
+# route for USER
+@app.route("/users", methods = ['GET', 'POST'])
+def user():
+    if request.method == 'GET':
+        users = User.query.all()
+        user_dict = [user.to_dict() for user in users]
+        return make_response(jsonify(user_dict), 200) 
+    elif request.method == 'POST':
+        body = request.get_json()
+        new_user = User()
+        for key, value in body.items():
+            setattr(new_user, key, value)
+        db.session.add(new_user)
+        db.session.commit()
+        return make_response(jsonify(new_user.to_dict()), 201)
+    
+# route for USER by ID
+@app.route('/users/<id>', methods = ['GET', 'DELETE', 'PATCH'])
+def get_user_by_id(id):
+    user_exists = User.query.get(id)
+    # validates if USER exists  
+    if not user_exists:
+        return jsonify({"error": "user not found"}), 404
+    if user_exists:
+        # GET for USER by ID
+        if request.method == 'GET':
+            return jsonify(user_exists.to_dict()), 200
+        # DELETE for USER by ID
+        elif request.method == 'DELETE':
+            db.session.delete(user_exists)
+            db.session.commit()
+            return jsonify({"status": "DELETE successful"}), 200
+        # PATCH for USER by ID
+        elif request.method == 'PATCH':
+            body = request.get_json()
+            for key, value in body.items():
+                setattr(user_exists, key, value)
+            db.session.add(user_exists)
+            db.session.commit()   
+            return jsonify(user_exists.to_dict()), 200    
